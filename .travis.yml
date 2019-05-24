@@ -1,0 +1,78 @@
+language: cpp
+
+branches:
+  only:
+    # - master
+    # Build all branches
+    - /.*/
+
+git:
+  # Need full depth for git describe (see package_linux.sh)
+  depth: false
+
+env:
+  global:
+    - DEPS_DIR=${HOME}/deps
+
+matrix:
+  include:
+    - os: linux
+      dist: trusty
+      sudo: required
+      compiler: gcc
+      env:
+        - VCPKG_TRIPLET=x64-linux
+        - CC_COMPILER=gcc
+        - CXX_COMPILER=g++
+      addons:
+        apt:
+          sources:
+            - ubuntu-toolchain-r-test
+          packages:
+            - g++
+
+before_install:
+  - export CXX_FLAGS=${CXX_FLAGS}" "${ENV_CXX_FLAGS}
+  # Get a more recent version of CMake
+  - mkdir $HOME/usr
+  - export PATH="$HOME/usr/bin:$PATH"
+  - export CMAKE_INSTALL_SCRIPT=cmake-3.14.4-Linux-x86_64.sh
+  - wget https://github.com/Kitware/CMake/releases/download/v3.14.4/${CMAKE_INSTALL_SCRIPT}
+  - chmod +x ${CMAKE_INSTALL_SCRIPT}
+  - ./${CMAKE_INSTALL_SCRIPT} --prefix=$HOME/usr --exclude-subdir --skip-license
+
+install:
+  # Create deps dir
+  - mkdir -p ${DEPS_DIR}
+
+  # Set compiler vars
+  - export CC=${CC_COMPILER}
+  - export CXX=${CXX_COMPILER}
+
+  # Install vcpkg
+  - |
+    set -e
+    mkdir -p ${DEPS_DIR}/vcpkg
+    pushd ${DEPS_DIR}/vcpkg
+    git init
+    git remote add origin https://github.com/Microsoft/vcpkg.git
+    git fetch origin master
+    git checkout -b master origin/master
+    ./bootstrap-vcpkg.sh
+    # Only build release libs to save time. We inject a new line first since some cmake files don't end with one.
+    echo -e '\nset(VCPKG_BUILD_TYPE release)' >> ./triplets/${VCPKG_TRIPLET}.cmake
+    popd
+
+cache:
+  directories:
+    - ${DEPS_DIR}/vcpkg/installed
+
+script:
+  - |
+    set -e
+    # Package and deploy only on master branch
+    if [ "$TRAVIS_BRANCH" == "master" ]; then
+      mkdir -p build && cd build
+      cmake -DCMAKE_BUILD_TYPE=Release -DCMAKE_CXX_FLAGS=${CXX_FLAGS} -DCMAKE_TOOLCHAIN_FILE=${DEPS_DIR}/vcpkg/scripts/buildsystems/vcpkg.cmake ..
+      make -j
+    fi
